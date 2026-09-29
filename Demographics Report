@@ -1,0 +1,285 @@
+WITH ActiveStudents AS (
+    SELECT DISTINCT
+        p.personID,
+        sc.schoolID,
+        sc.name AS schoolName,
+        i.gender,
+        CASE
+            WHEN ISNULL(i.hispanicEthnicity, '0') = '1'
+                OR ISNULL(i.stateHispanicEthnicity, '0') = '1'
+                OR i.raceEthnicityFed = '1'
+                OR i.raceEthnicity = '1'
+                THEN 'Hispanic / Latino'
+
+            WHEN i.raceEthnicityFed = '2'
+                OR i.raceEthnicity = '2'
+                THEN 'American Indian / Alaska Native'
+
+            WHEN i.raceEthnicityFed IN ('3', '5')
+                OR i.raceEthnicity IN ('3', '5')
+                THEN 'Asian'
+
+            WHEN i.raceEthnicityFed = '4'
+                OR i.raceEthnicity = '4'
+                THEN 'Black / African American'
+
+            WHEN i.raceEthnicityFed = '6'
+                OR i.raceEthnicity = '6'
+                THEN 'White'
+
+            ELSE 'Two or More Races / Other'
+        END AS raceCategory
+    FROM dbo.Person AS p
+    INNER JOIN dbo.[Identity] AS i
+        ON p.currentIdentityID = i.identityID
+    INNER JOIN dbo.Enrollment AS e
+        ON e.personID = p.personID
+    INNER JOIN dbo.Calendar AS c
+        ON e.calendarID = c.calendarID
+    INNER JOIN dbo.School AS sc
+        ON c.schoolID = sc.schoolID
+    WHERE ISNULL(e.noShow, 0) = 0
+      AND ISNULL(c.exclude, 0) = 0
+      AND SIGN(DATEDIFF(DAY, e.startDate, GETDATE())) IN (0, 1)
+      AND (
+            e.endDate IS NULL
+            OR SIGN(DATEDIFF(DAY, GETDATE(), e.endDate)) IN (0, 1)
+          )
+),
+
+SchoolSummary AS (
+    /* ============================================================
+       DISTRICT OVERALL SUMMARY
+       ============================================================ */
+    SELECT
+        '=== DISTRICT OVERALL SUMMARY ===' AS schoolName,
+        0 AS sortOrder,
+        COUNT(*) AS totalEnrolled,
+
+        -- Gender
+        SUM(CASE WHEN gender = 'F' THEN 1 ELSE 0 END) AS femaleCount,
+        SUM(CASE WHEN gender = 'M' THEN 1 ELSE 0 END) AS maleCount,
+
+        -- White Students
+        SUM(CASE WHEN raceCategory = 'White' THEN 1 ELSE 0 END) AS whiteCount,
+        SUM(
+            CASE
+                WHEN raceCategory = 'White' AND gender = 'F'
+                    THEN 1
+                ELSE 0
+            END
+        ) AS whiteFemaleCount,
+        SUM(
+            CASE
+                WHEN raceCategory = 'White' AND gender = 'M'
+                    THEN 1
+                ELSE 0
+            END
+        ) AS whiteMaleCount,
+
+        -- Other Race/Ethnicity Categories
+        SUM(
+            CASE
+                WHEN raceCategory = 'Black / African American'
+                    THEN 1
+                ELSE 0
+            END
+        ) AS blackCount,
+        SUM(
+            CASE
+                WHEN raceCategory = 'Hispanic / Latino'
+                    THEN 1
+                ELSE 0
+            END
+        ) AS hispanicCount,
+        SUM(
+            CASE
+                WHEN raceCategory = 'Asian'
+                    THEN 1
+                ELSE 0
+            END
+        ) AS asianCount,
+        SUM(
+            CASE
+                WHEN raceCategory = 'American Indian / Alaska Native'
+                    THEN 1
+                ELSE 0
+            END
+        ) AS nativeCount,
+        SUM(
+            CASE
+                WHEN raceCategory = 'Two or More Races / Other'
+                    THEN 1
+                ELSE 0
+            END
+        ) AS otherRaceCount
+    FROM ActiveStudents
+
+    UNION ALL
+
+    /* ============================================================
+       SCHOOL-LEVEL SUMMARY
+       ============================================================ */
+    SELECT
+        schoolName,
+        1 AS sortOrder,
+        COUNT(*) AS totalEnrolled,
+
+        -- Gender
+        SUM(CASE WHEN gender = 'F' THEN 1 ELSE 0 END) AS femaleCount,
+        SUM(CASE WHEN gender = 'M' THEN 1 ELSE 0 END) AS maleCount,
+
+        -- White Students
+        SUM(CASE WHEN raceCategory = 'White' THEN 1 ELSE 0 END) AS whiteCount,
+        SUM(
+            CASE
+                WHEN raceCategory = 'White' AND gender = 'F'
+                    THEN 1
+                ELSE 0
+            END
+        ) AS whiteFemaleCount,
+        SUM(
+            CASE
+                WHEN raceCategory = 'White' AND gender = 'M'
+                    THEN 1
+                ELSE 0
+            END
+        ) AS whiteMaleCount,
+
+        -- Other Race/Ethnicity Categories
+        SUM(
+            CASE
+                WHEN raceCategory = 'Black / African American'
+                    THEN 1
+                ELSE 0
+            END
+        ) AS blackCount,
+        SUM(
+            CASE
+                WHEN raceCategory = 'Hispanic / Latino'
+                    THEN 1
+                ELSE 0
+            END
+        ) AS hispanicCount,
+        SUM(
+            CASE
+                WHEN raceCategory = 'Asian'
+                    THEN 1
+                ELSE 0
+            END
+        ) AS asianCount,
+        SUM(
+            CASE
+                WHEN raceCategory = 'American Indian / Alaska Native'
+                    THEN 1
+                ELSE 0
+            END
+        ) AS nativeCount,
+        SUM(
+            CASE
+                WHEN raceCategory = 'Two or More Races / Other'
+                    THEN 1
+                ELSE 0
+            END
+        ) AS otherRaceCount
+    FROM ActiveStudents
+    GROUP BY schoolName
+)
+
+SELECT
+    schoolName AS [School / Summary Level],
+    totalEnrolled AS [Total Active Enrollment],
+
+    /* ============================================================
+       GENDER BREAKDOWN
+       ============================================================ */
+    femaleCount AS [Female Count],
+    CAST(
+        ROUND(
+            femaleCount * 100.0 / NULLIF(totalEnrolled, 0),
+            2
+        ) AS DECIMAL(5, 2)
+    ) AS [% Female],
+
+    maleCount AS [Male Count],
+    CAST(
+        ROUND(
+            maleCount * 100.0 / NULLIF(totalEnrolled, 0),
+            2
+        ) AS DECIMAL(5, 2)
+    ) AS [% Male],
+
+    /* ============================================================
+       WHITE STUDENT BREAKDOWN
+       ============================================================ */
+    whiteCount AS [White Total Count],
+    CAST(
+        ROUND(
+            whiteCount * 100.0 / NULLIF(totalEnrolled, 0),
+            2
+        ) AS DECIMAL(5, 2)
+    ) AS [% White Total],
+
+    whiteFemaleCount AS [White Female Count],
+    CAST(
+        ROUND(
+            whiteFemaleCount * 100.0 / NULLIF(totalEnrolled, 0),
+            2
+        ) AS DECIMAL(5, 2)
+    ) AS [% White Female],
+
+    whiteMaleCount AS [White Male Count],
+    CAST(
+        ROUND(
+            whiteMaleCount * 100.0 / NULLIF(totalEnrolled, 0),
+            2
+        ) AS DECIMAL(5, 2)
+    ) AS [% White Male],
+
+    /* ============================================================
+       ADDITIONAL RACE/ETHNICITY CATEGORIES
+       ============================================================ */
+    blackCount AS [Black / African Amer Count],
+    CAST(
+        ROUND(
+            blackCount * 100.0 / NULLIF(totalEnrolled, 0),
+            2
+        ) AS DECIMAL(5, 2)
+    ) AS [% Black / African Amer],
+
+    hispanicCount AS [Hispanic / Latino Count],
+    CAST(
+        ROUND(
+            hispanicCount * 100.0 / NULLIF(totalEnrolled, 0),
+            2
+        ) AS DECIMAL(5, 2)
+    ) AS [% Hispanic / Latino],
+
+    asianCount AS [Asian Count],
+    CAST(
+        ROUND(
+            asianCount * 100.0 / NULLIF(totalEnrolled, 0),
+            2
+        ) AS DECIMAL(5, 2)
+    ) AS [% Asian],
+
+    nativeCount AS [Amer Indian / AK Native Count],
+    CAST(
+        ROUND(
+            nativeCount * 100.0 / NULLIF(totalEnrolled, 0),
+            2
+        ) AS DECIMAL(5, 2)
+    ) AS [% Amer Indian / AK Native],
+
+    otherRaceCount AS [Two or More / Other Count],
+    CAST(
+        ROUND(
+            otherRaceCount * 100.0 / NULLIF(totalEnrolled, 0),
+            2
+        ) AS DECIMAL(5, 2)
+    ) AS [% Two or More / Other]
+
+FROM SchoolSummary
+ORDER BY
+    sortOrder,
+    schoolName;
