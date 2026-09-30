@@ -1,0 +1,122 @@
+SELECT DISTINCT
+    sch.name AS SchoolName,
+    sch.number AS SchoolIDNumber,
+    p.studentNumber,
+    i.lastName AS StudentLastName,
+    i.firstName AS StudentFirstName,
+    i.firstName + ' ' + i.lastName AS StudentName,
+    a.addressID,
+    a.number AS HouseNumber,
+    a.prefix AS Prefix,
+    a.street AS StreetName,
+    a.tag AS Tag,
+    a.dir AS Direction,
+    a.apt AS Apartment,
+    a.city AS City,
+    a.state AS State,
+    a.zip AS Zip,
+    -- Summarizes all validation issues found for the record
+    STUFF((
+        SELECT '; ' + Issue
+        FROM (
+            -- Check 1: Street field contains embedded road tag or abbreviation
+            SELECT 'Street contains tag/abbreviation' AS Issue
+            WHERE EXISTS (
+                SELECT 1
+                FROM (VALUES 
+                    ('ST'), ('STREET'), ('RD'), ('ROAD'), ('AVE'), ('AVENUE'), 
+                    ('DR'), ('DRIVE'), ('BLVD'), ('BOULEVARD'), ('LN'), ('LANE'), 
+                    ('CT'), ('COURT'), ('CIR'), ('CIRCLE'), ('WAY'), ('PKWY'), 
+                    ('PARKWAY'), ('PL'), ('PLACE'), ('HWY'), ('HIGHWAY'), ('TRL'), ('TRAIL')
+                ) AS Tags(Word)
+                WHERE ' ' + UPPER(a.street) + ' ' LIKE '% ' + Tags.Word + ' %'
+                   OR ' ' + UPPER(a.street) + ' ' LIKE '% ' + Tags.Word + '. %'
+            )
+
+            UNION ALL
+
+            -- Check 2: Tag field contains a period
+            SELECT 'Tag contains period' AS Issue
+            WHERE a.tag LIKE '%.%'
+
+            UNION ALL
+
+            -- Check 3: Invalid Prefix value
+            SELECT 'Invalid Prefix (' + ISNULL(a.prefix, '') + ')' AS Issue
+            WHERE NULLIF(RTRIM(LTRIM(a.prefix)), '') IS NOT NULL
+              AND UPPER(RTRIM(LTRIM(a.prefix))) NOT IN ('N', 'S', 'E', 'W', 'NE', 'NW', 'SE', 'SW')
+
+            UNION ALL
+
+            -- Check 4: Invalid Dir (Direction) value
+            SELECT 'Invalid Dir (' + ISNULL(a.dir, '') + ')' AS Issue
+            WHERE NULLIF(RTRIM(LTRIM(a.dir)), '') IS NOT NULL
+              AND UPPER(RTRIM(LTRIM(a.dir))) NOT IN ('N', 'S', 'E', 'W', 'NE', 'NW', 'SE', 'SW')
+
+            UNION ALL
+
+            -- Check 5: Leading or trailing (hanging) spaces
+            SELECT 'Hanging spaces detected' AS Issue
+            WHERE a.number <> LTRIM(RTRIM(a.number))
+               OR a.street <> LTRIM(RTRIM(a.street))
+               OR a.tag <> LTRIM(RTRIM(a.tag))
+               OR a.prefix <> LTRIM(RTRIM(a.prefix))
+               OR a.dir <> LTRIM(RTRIM(a.dir))
+               OR a.apt <> LTRIM(RTRIM(a.apt))
+               OR a.city <> LTRIM(RTRIM(a.city))
+               OR a.state <> LTRIM(RTRIM(a.state))
+               OR a.zip <> LTRIM(RTRIM(a.zip))
+        ) AS AuditChecks
+        FOR XML PATH(''), TYPE
+    ).value('.', 'NVARCHAR(MAX)'), 1, 2, '') AS AuditIssues
+FROM dbo.Address a
+INNER JOIN dbo.HouseholdLocation hl ON a.addressID = hl.addressID
+INNER JOIN dbo.HouseholdMember hm ON hl.householdID = hm.householdID
+INNER JOIN dbo.Person p ON hm.personID = p.personID
+INNER JOIN dbo.[Identity] i ON p.currentIdentityID = i.identityID
+INNER JOIN dbo.student stu WITH (NOEXPAND) ON p.personID = stu.personID
+INNER JOIN dbo.Calendar cal ON stu.calendarID = cal.calendarID
+INNER JOIN dbo.School sch ON cal.schoolID = sch.schoolID
+WHERE 
+    -- Restrict to active household locations, household members, and active student enrollments
+    (hl.endDate IS NULL OR hl.endDate >= GETDATE())
+    AND (hm.endDate IS NULL OR hm.endDate >= GETDATE())
+    AND stu.startDate <= GETDATE()
+    AND (stu.endDate IS NULL OR stu.endDate >= GETDATE())
+    AND (
+        -- 1. Street contains tag keywords
+        EXISTS (
+            SELECT 1
+            FROM (VALUES 
+                ('ST'), ('STREET'), ('RD'), ('ROAD'), ('AVE'), ('AVENUE'), 
+                ('DR'), ('DRIVE'), ('BLVD'), ('BOULEVARD'), ('LN'), ('LANE'), 
+                ('CT'), ('COURT'), ('CIR'), ('CIRCLE'), ('WAY'), ('PKWY'), 
+                ('PARKWAY'), ('PL'), ('PLACE'), ('HWY'), ('HIGHWAY'), ('TRL'), ('TRAIL')
+            ) AS Tags(Word)
+            WHERE ' ' + UPPER(a.street) + ' ' LIKE '% ' + Tags.Word + ' %'
+               OR ' ' + UPPER(a.street) + ' ' LIKE '% ' + Tags.Word + '. %'
+        )
+        -- 2. Tag has period
+        OR a.tag LIKE '%.%'
+        -- 3. Prefix invalid
+        OR (
+            NULLIF(RTRIM(LTRIM(a.prefix)), '') IS NOT NULL 
+            AND UPPER(RTRIM(LTRIM(a.prefix))) NOT IN ('N', 'S', 'E', 'W', 'NE', 'NW', 'SE', 'SW')
+        )
+        -- 4. Dir invalid
+        OR (
+            NULLIF(RTRIM(LTRIM(a.dir)), '') IS NOT NULL 
+            AND UPPER(RTRIM(LTRIM(a.dir))) NOT IN ('N', 'S', 'E', 'W', 'NE', 'NW', 'SE', 'SW')
+        )
+        -- 5. Hanging spaces
+        OR a.number <> LTRIM(RTRIM(a.number))
+        OR a.street <> LTRIM(RTRIM(a.street))
+        OR a.tag <> LTRIM(RTRIM(a.tag))
+        OR a.prefix <> LTRIM(RTRIM(a.prefix))
+        OR a.dir <> LTRIM(RTRIM(a.dir))
+        OR a.apt <> LTRIM(RTRIM(a.apt))
+        OR a.city <> LTRIM(RTRIM(a.city))
+        OR a.state <> LTRIM(RTRIM(a.state))
+        OR a.zip <> LTRIM(RTRIM(a.zip))
+    )
+ORDER BY sch.name, i.lastName, i.firstName;
